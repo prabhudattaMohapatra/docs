@@ -1,0 +1,54 @@
+services:
+  # Backend Service
+  payroll-backend:
+    image: payroll-engine/backend:latest
+    container_name: payroll-engine-backend
+    platform: linux/amd64
+    ports:
+      - "9080:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      # Don't set DB_HOST or DB_SECRET_NAME to bypass AWS Secrets Manager logic
+      # Instead rely on the connection string directly
+      - ConnectionStrings__PayrollDatabaseConnection=Server=host.docker.internal,1433;Database=PayrollEngine;User Id=sa;Password=PayrollStrongPass789!;TrustServerCertificate=true;
+      # FastReport environment variables
+      - DISPLAY=:99
+      - FONTCONFIG_PATH=/etc/fonts
+      - DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - payroll-network
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 3 bash -c '</dev/tcp/localhost/8080' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Webapp Service
+  payroll-webapp:
+    image: payroll-engine/webapp:latest
+    container_name: payroll-engine-webapp
+    platform: linux/amd64
+    ports:
+      - "9081:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      # Fix the API connection configuration
+      - PayrollApiConnection=BaseUrl=http://payroll-backend; Port=8080; Timeout=00:05:00
+      # FastReport environment variables
+      - DISPLAY=:99
+      - FONTCONFIG_PATH=/etc/fonts
+      - DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
+    depends_on:
+      payroll-backend:
+        condition: service_healthy
+    networks:
+      - payroll-network
+
+networks:
+  payroll-network:
+    driver: bridge
