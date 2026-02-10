@@ -91,13 +91,13 @@ public partial class WageTypeValueFunction
 - **Column**: `Value` (contains the Rules.cs C# code)
 - **Filter**: `FunctionTypeMask` includes `FunctionType.Payroll`
 
-**In Memory** (during compilation):
-- Scripts are loaded from database
-- Included in compilation unit
-- Compiled into assembly binary
+**At import** (when WageTypes.json etc. are imported):
+- Scripts are loaded from database (Script table)
+- Included in compilation unit and compiled into assembly binary
+- Binary stored on script object (e.g. `WageType.Binary`). **No compilation at payrun.**
 
-**In Memory** (during execution):
-- Compiled assembly is cached in `AssemblyCache`
+**At payrun** (during execution):
+- Precompiled binary is loaded from DB or `AssemblyCache`; no compilation
 - Functions are available as methods on `WageTypeValueFunction` class
 
 ---
@@ -121,9 +121,9 @@ This expression is stored in the `WageType` table, `ValueExpression` column.
 
 ---
 
-### Step 2: Script Compilation (When WageType is Saved)
+### Step 2: Script Compilation (At Import, When WageType is Saved)
 
-**Trigger**: When a `WageType` is created or updated, the system compiles its scripts.
+**Trigger**: When a `WageType` is created or updated **during import** (e.g. when WageTypes.json is imported via PayrollImport), the system compiles its scripts and stores the binary on the WageType. **Compilation does not happen at payrun time**—at payrun only the precompiled binary is loaded and executed.
 
 **Compilation Process** (`ScriptCompiler.Compile()`):
 
