@@ -1,7 +1,8 @@
 # POC: Precompiled JAR Option for Regulation Execution (Java)
 
 **Status:** Draft  
-**Related RFC:** [rfc_runtime_rules_scripting_options.md](rfc_runtime_rules_scripting_options.md) — Option 2: Precompiled (JAR / JS Bundle)  
+**Related:** [poc_precompiled_jar_scope.md](poc_precompiled_jar_scope.md) — Scope (precompiled JAR only; full payrun to results) | [poc_precompiled_jar_objectives.md](poc_precompiled_jar_objectives.md) — Objectives  
+**RFC:** [rfc_runtime_rules_scripting_options.md](rfc_runtime_rules_scripting_options.md) — Option 2: Precompiled (JAR / JS Bundle)  
 **Language / stack:** Java
 
 ---
@@ -134,43 +135,45 @@ Follow in order. Each step assumes the previous is done.
 
 ## 1. Purpose and objectives
 
-Validate the **precompiled JAR** execution model for regulation logic in a Java-based payroll engine: regulation code lives in versioned JARs; the engine loads them by regulation id/version and invokes a fixed interface (e.g. `evaluateWageType`, `collectorStart`) at payrun time. No code in DB; no runtime compile.
+**Primary:** Build a minimal payroll engine in Java, inspired by the .NET engine, that runs a **full payrun** from start through to **payrun results**. Regulation behaviour is provided **only** by a **precompiled JAR** (loaded from a plugin directory). See [poc_precompiled_jar_objectives.md](poc_precompiled_jar_objectives.md).
 
 **Objectives:**
 
-- Prove that the engine can **load and invoke** a regulation JAR via a clear contract (e.g. `RegulationEvaluator`).
-- Validate **versioning and resolution** (regulation id + version → JAR).
-- Measure **performance and behaviour** (load once per regulation, in-process method calls).
-- Identify **implementation choices** (classpath vs plugin directory, SPI vs custom loader, caching).
-- Document **build/deploy flow** (VCS → CI → JAR → engine) and failure modes.
+- **Prove precompiled JAR execution:** Demonstrate that regulation logic in a versioned JAR can be loaded by (regulation id, version) and invoked by the engine (`evaluateWageType`, collector lifecycle) with acceptable complexity and performance.
+- **Validate full payrun flow:** PayrunStart → (per employee) EmployeeStart → wage types + collectors → EmployeeEnd → PayrunEnd → **payrun results**.
+- **Versioning and resolution:** (regulation id + version) → JAR path; load by version; optionally rollback.
+- **Implementation choices:** Classpath vs plugin directory, caching, classloader behaviour; document build/deploy flow and failure modes.
+- **Inform future choice:** Produce evidence to support the decision between precompiled JAR and other options (e.g. external service in a separate POC).
 
 ---
 
 ## 2. POC scope
 
-The engine supports **two execution paths**: (1) **precompiled JAR** — load regulation from a JAR in a plugin directory; (2) **external regulation service** — call an HTTP/gRPC service to get wage type results. Configuration determines which path is used per regulation.
+**Regulation execution:** Precompiled JAR only (no external regulation service in this POC).  
+**Payrun:** Full payrun from start through to **payrun results** (PayrunStart → EmployeeStart → wage types + collectors → EmployeeEnd → PayrunEnd → payrun results). See [poc_precompiled_jar_scope.md](poc_precompiled_jar_scope.md) and [poc_precompiled_jar_objectives.md](poc_precompiled_jar_objectives.md).
 
 ### In scope
 
-- **Engine (Java):** Minimal “payrun” that (1) **JAR path:** resolves regulation by id/version, loads a JAR from a plugin directory, obtains `RegulationEvaluator`, and calls `evaluateWageType(wageTypeNumber, context)`; (2) **Service path:** resolves regulation to a service endpoint, calls the external regulation service (HTTP or gRPC) with context (tenant, employee, period, wage type number, case values), and gets the wage type value from the response. Engine branches per regulation (or config) to use one path or the other.
-- **Contract (JAR):** Java interfaces `RegulationEvaluator`, `EvaluationContext`, `WageTypeResult`. Enough to return a wage type value; optionally one collector lifecycle method. No need to mirror full .NET semantics.
-- **Contract (external service):** Request/response schema for the regulation service (e.g. POST: tenantId, regulationId, employeeId, period, wageTypeNumber, caseValues; response: value or error). Engine HTTP/gRPC client with timeouts and optional retries.
-- **Sample regulation JAR:** One JAR (e.g. poc-regulation) that implements the JAR contract with a handful of wage type numbers and trivial or simplified logic. One collector start/end if useful.
-- **Stub regulation service:** Minimal HTTP (or gRPC) service that implements the external-service contract; trivial logic for POC. Used to validate the service path end-to-end.
-- **Versioning / resolution:** Engine configuration or in-memory map: (regulation id, version) → JAR path **or** service endpoint. Demonstrate load by version (JAR) and call by endpoint (service); optionally rollback.
-- **Caching:** JAR path: load evaluator once per (regulationId, version) and reuse. Service path: no evaluator cache; optional client pooling. Document approach and classloader considerations.
-- **Failure handling:** JAR path: missing JAR, wrong version, evaluator exception. Service path: timeout, 4xx/5xx, service down — retries and/or fail behaviour; document both.
-- **Tests:** Unit tests for contract, JAR loader, and minimal payrun (JAR path). Unit and/or integration tests for engine calling stub regulation service (service path). Optional: benchmark for both paths.
-- **Documentation:** POC report covering design choices for both paths, metrics, failure behaviour, and recommendations (proceed / refine / abandon).
+- **Engine (Java):** Minimal payroll engine that runs a **full payrun** to **payrun results**. Regulation behaviour from **precompiled JAR only**: resolve (regulation id, version) → load JAR from plugin directory → obtain `RegulationEvaluator` → call `evaluateWageType`, collector start/end as needed through the payrun flow.
+- **Full payrun flow:** PayrunStart → (per employee) EmployeeStart → wage type evaluation + collector lifecycle (start/apply/end) → EmployeeEnd → PayrunEnd → **payrun results** (wage type results, collector results; minimal but complete outcome).
+- **Contract:** Java interfaces `RegulationEvaluator`, `EvaluationContext`, `WageTypeResult`, and collector lifecycle as needed. Enough to drive wage types and collectors through the payrun.
+- **Sample regulation JAR:** One JAR implementing the contract with wage type and collector logic (trivial or simplified for POC).
+- **Versioning / resolution:** (regulation id, version) → JAR path. Load by version; optionally rollback.
+- **Caching:** Load evaluator once per (regulationId, version); reuse across payrun. Document approach.
+- **Persistence for payrun:** Storage (in-memory or minimal) sufficient to run the payrun and produce payrun results.
+- **Failure handling:** Missing JAR, wrong version, evaluator exception; document behaviour.
+- **Tests:** Unit tests for contract, loader, payrun steps; integration test for full payrun to results. Optional benchmark.
+- **Documentation:** POC report: design, payrun flow, metrics, failure behaviour, recommendations.
 
 ### Out of scope
 
-- Full payrun lifecycle (PayrunStart, EmployeeStart/End, multiple collectors, report generation).
-- Real France/India/Swiss regulation logic; only simplified/stub logic.
-- Persistence layer (real DB for Regulation/WageType); in-memory or minimal stub is enough.
-- Production-grade security (e.g. signed JARs, sandboxing); note requirements for production.
-- Multi-tenant isolation beyond “one regulation version per resolution”.
-- Comparison with .NET engine behaviour or migration tooling.
+- External regulation service (HTTP/gRPC); separate POC or later phase.
+- Real France/India/Swiss regulation logic; only simplified/stub logic in sample JAR.
+- Production DB or full persistence schema; minimal storage for POC.
+- Production-grade security (e.g. signed JARs, sandboxing); note for production.
+- Multi-tenant isolation beyond what is needed for one payrun.
+- Report generation beyond payrun results (e.g. no PDF/Excel reports).
+- Detailed .NET comparison or migration tooling.
 
 ---
 
@@ -227,7 +230,7 @@ The engine supports **two execution paths**: (1) **precompiled JAR** — load re
 - **Developer experience:** How easy is it to add a new regulation JAR and wire it in? Build and deploy steps.
 - **Risks:** Classloader leaks, version skew between engine and JAR contract, multi-regulation memory usage.
 
-Findings will be fed into the **Evaluation criteria and decision making** document for comparison with the External Service POC.
+Findings will be fed into the **Evaluation criteria and decision making** document to inform the choice between precompiled JAR and other options (e.g. external service in a later phase).
 
 ---
 

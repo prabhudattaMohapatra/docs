@@ -1,8 +1,34 @@
-# Local development guide: Precompiled JAR POC (for new Java developers)
+# Local development guide: Precompiled JAR POC
 
-This guide walks you through building the **precompiled JAR** POC from scratch on your machine. It assumes you are new to Java and explains each step in detail, with exact commands and file contents you can copy.
+This guide walks you through building the **precompiled JAR** POC from scratch: a minimal engine that loads regulation from a plugin directory and runs a payrun to wage type results. **External regulation service is out of scope** for this POC; regulation is **precompiled JAR only**. It assumes you are new to Java and explains each step with exact commands and copy-paste code.
 
-**Related:** [poc_runtime_rules_precompiled_jar_java.md](poc_runtime_rules_precompiled_jar_java.md) — POC scope, objectives, and evaluation.
+**Related:** [poc_precompiled_jar_scope.md](poc_precompiled_jar_scope.md) — Scope (precompiled JAR only; full payrun to results) | [poc_precompiled_jar_objectives.md](poc_precompiled_jar_objectives.md) — Objectives | [poc_runtime_rules_precompiled_jar_java.md](poc_runtime_rules_precompiled_jar_java.md) — POC details and evaluation.
+
+**Repos:** This guide uses two repositories, both in the workspace: **payroll-engine-poc** (engine + regulation-api) and **payroll-regulations-poc** (sample regulation JAR). Use their paths as the project roots; you do not need to create new folders or run `git init` if the repos are already cloned/opened.
+
+---
+
+## Status of tasks
+
+Track progress by updating the status as you complete each part. Use: **Not started** | **In progress** | **Done**.
+
+| Task | Repo | Status |
+|------|------|--------|
+| Part 1: Prerequisites (JDK, Maven, Git, IDE, workspace) | — | Done |
+| Part 2: Concepts | — | Reference |
+| Part 3.1: Parent POM (modules: regulation-api, engine) | payroll-engine-poc | Done |
+| Part 3.2: regulation-api module (RegulationEvaluator, EvaluationContext, WageTypeResult) | payroll-engine-poc | Done |
+| Part 3.3: engine module skeleton + plugins/ | payroll-engine-poc | Done |
+| Part 4.1: payroll-regulations-poc parent POM + poc-regulation module | payroll-regulations-poc | Done |
+| Part 4.2: PocRegulationEvaluator | payroll-regulations-poc | Done |
+| Part 5.1: StubEvaluationContext | payroll-engine-poc | Not started |
+| Part 5.2: RegulationRegistry (JAR path only) | payroll-engine-poc | Not started |
+| Part 5.3: RegulationEvaluatorLoader | payroll-engine-poc | Not started |
+| Part 5.4: MinimalPayrun (JAR path) | payroll-engine-poc | Not started |
+| Part 5.5: Main (run payrun via JAR) | payroll-engine-poc | Not started |
+| Part 6: Build and run (install, package, copy JAR, run engine) | both | Not started |
+| Part 7: Troubleshooting | — | Reference |
+| Part 8: Optional unit test | payroll-engine-poc | Optional |
 
 ---
 
@@ -67,14 +93,9 @@ You can also use any text editor and run everything from the terminal; this guid
 
 ---
 
-### 1.5 Choose a workspace directory
+### 1.5 Workspace and repos
 
-Create a folder where both projects will live, e.g.:
-```bash
-mkdir -p ~/payroll-poc
-cd ~/payroll-poc
-```
-All commands below assume you run them from the appropriate project folder (or `~/payroll-poc` when creating folders).
+The two repos **payroll-engine-poc** and **payroll-regulations-poc** are already in your workspace. Use their paths as the project roots (e.g. `payroll-engine-poc/` and `payroll-regulations-poc/` alongside each other). All commands below assume you run them from the appropriate repo root or from the path indicated (e.g. `cd payroll-engine-poc`).
 
 ---
 
@@ -82,24 +103,19 @@ All commands below assume you run them from the appropriate project folder (or `
 
 - **Maven:** Build tool. It reads `pom.xml` (Project Object Model) in each project and module. Running `mvn compile` compiles Java files; `mvn package` builds a JAR; `mvn install` builds and **installs** the JAR into your local Maven repository (`~/.m2/repository` on macOS/Linux) so other projects can use it as a dependency.
 - **Module:** A sub-project inside a parent project. The **parent** has a `pom.xml` with `<modules>`. Each module has its own `pom.xml` and `src/main/java/` (and optionally `src/test/java/`).
-- **JAR:** A Java archive (a ZIP file containing compiled `.class` files and optionally a manifest). The engine will **load** a regulation JAR from a `plugins/` folder at runtime using `URLClassLoader`.
-- **Two repos:** **payroll-engine-poc** (engine + contract) and **payroll-regulations-poc** (regulation implementation). You build the engine first and run `mvn install` so the contract JAR is in local Maven; then you build the regulation project, which depends on that contract.
+- **Regulation execution:** **Precompiled JAR only** (no external regulation service in this POC). Engine resolves regulation by (id, version) → loads a JAR from a `plugins/` directory → instantiates `RegulationEvaluator` → calls `evaluateWageType(wageTypeNumber, context)` in process.
+- **JAR:** A Java archive (a ZIP file containing compiled `.class` files). The engine loads regulation JARs from `plugins/` at runtime using `URLClassLoader`.
+- **Two repos:** **payroll-engine-poc** (regulation-api + engine) and **payroll-regulations-poc** (sample regulation JAR). You build the engine repo first and install the regulation-api JAR; then you build the regulation JAR and copy it into the engine’s plugins directory.
 
 ---
 
-## Part 3: Create payroll-engine-poc (engine repo)
+## Part 3: payroll-engine-poc (engine repo)
 
-### Step 3.1 Create the project folder and parent POM
+Use the existing **payroll-engine-poc** repo in your workspace. Add or update the following structure and files.
 
-From your workspace (e.g. `~/payroll-poc`):
+### Step 3.1 Parent POM
 
-```bash
-mkdir payroll-engine-poc
-cd payroll-engine-poc
-git init
-```
-
-Create the **parent** `pom.xml` in the root of `payroll-engine-poc`:
+Create or update the **parent** `pom.xml` in the root of **payroll-engine-poc**:
 
 **File: `payroll-engine-poc/pom.xml`**
 ```xml
@@ -114,7 +130,7 @@ Create the **parent** `pom.xml` in the root of `payroll-engine-poc`:
     <version>1.0.0-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>Payroll Engine POC</name>
-    <description>Engine and regulation API for precompiled JAR POC</description>
+    <description>Minimal engine and regulation API for precompiled JAR POC (no external service)</description>
 
     <modules>
         <module>regulation-api</module>
@@ -131,7 +147,7 @@ Create the **parent** `pom.xml` in the root of `payroll-engine-poc`:
 
 - Use `25` (latest LTS) here, or `21`/`17` if your JDK is older.
 - `packaging>pom</packaging>` means this is a parent that only aggregates modules (it does not produce a JAR itself).
-- `modules` lists the two sub-projects: `regulation-api` and `engine`.
+- `modules`: `regulation-api` (JAR contract), `engine` (loader, registry, payrun).
 
 ---
 
@@ -206,7 +222,7 @@ public record WageTypeResult(int wageTypeNumber, BigDecimal value) {}
 
 **Build and install the API into your local Maven repo:**
 ```bash
-cd ~/payroll-poc/payroll-engine-poc
+cd payroll-engine-poc
 mvn clean install
 ```
 
@@ -216,7 +232,73 @@ You should see `BUILD SUCCESS`. The JAR `regulation-api-1.0.0-SNAPSHOT.jar` is n
 
 ### Step 3.3 Create the engine module (skeleton)
 
-Create the engine module and the **plugins** directory. We will add the loader, registry, and payrun in the next steps.
+Create the engine module and the **plugins** directory. The engine contains the JAR loader, registry, and payrun (precompiled JAR only). Skip the next block (regulation-service-api) — it is out of scope. Go to **File: engine/pom.xml** below.
+
+**OUT OF SCOPE (do not implement): regulation-service-api module** Both the engine’s HTTP client and the stub service use these DTOs.
+
+```bash
+mkdir -p regulation-service-api/src/main/java/com/payroll/regulation/service/api
+```
+
+**File: `regulation-service-api/pom.xml`**
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.payroll</groupId>
+        <artifactId>payroll-engine-poc</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>regulation-service-api</artifactId>
+    <packaging>jar</packaging>
+    <name>Regulation Service API</name>
+    <description>Request/response DTOs for external regulation service (HTTP)</description>
+</project>
+```
+
+**File: `regulation-service-api/src/main/java/com/payroll/regulation/service/api/EvaluateWageTypeRequest.java`**
+```java
+package com.payroll.regulation.service.api;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.Map;
+
+public record EvaluateWageTypeRequest(
+    String tenantId,
+    String regulationId,
+    String employeeId,
+    LocalDate periodStart,
+    LocalDate periodEnd,
+    int wageTypeNumber,
+    Map<String, BigDecimal> caseValues
+) {}
+```
+
+**File: `regulation-service-api/src/main/java/com/payroll/regulation/service/api/EvaluateWageTypeResponse.java`**
+```java
+package com.payroll.regulation.service.api;
+
+import java.math.BigDecimal;
+
+public record EvaluateWageTypeResponse(BigDecimal value) {}
+```
+
+For errors, the stub can return HTTP 500 or 400; the engine client will throw or map to an error result. An optional `EvaluateWageTypeError` record can be added later if you need a structured error body.
+
+Run from parent: `mvn clean install`. The engine and regulation-service-stub will depend on this module.
+
+---
+
+### Step 3.4 Create the engine module (skeleton)
+
+Create the engine module and the **plugins** directory. The engine will contain the JAR loader, the regulation service HTTP client, and the payrun that supports both paths.
 
 ```bash
 mkdir -p engine/src/main/java/com/payroll/engine
@@ -241,7 +323,7 @@ mkdir -p engine/plugins
     <artifactId>engine</artifactId>
     <packaging>jar</packaging>
     <name>Engine</name>
-    <description>Engine that loads regulation JARs from plugins/ and runs payrun</description>
+    <description>Engine: JAR loader and payrun (precompiled JAR only)</description>
 
     <dependencies>
         <dependency>
@@ -249,29 +331,172 @@ mkdir -p engine/plugins
             <artifactId>regulation-api</artifactId>
             <version>1.0.0-SNAPSHOT</version>
         </dependency>
+        <dependency>
+            <groupId>com.payroll</groupId>
+            <artifactId>regulation-service-api</artifactId>
+            <version>1.0.0-SNAPSHOT</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>2.15.3</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+            <version>2.15.3</version>
+        </dependency>
     </dependencies>
 </project>
 ```
 
-Run from the **parent** directory again:
-```bash
-cd ~/payroll-poc/payroll-engine-poc
-mvn clean install
-```
-Both modules should build. The `engine` JAR will be in `engine/target/engine-1.0.0-SNAPSHOT.jar`. The `plugins/` folder is where you will later copy the regulation JAR.
+Jackson is used by the engine’s regulation service HTTP client to serialize requests and parse responses.
+
+Run from the **parent** directory: `mvn clean install`. The `plugins/` folder is where you will copy the regulation JAR.
 
 ---
 
-## Part 4: Create payroll-regulations-poc (regulation repo)
+### Step 3.5 (Out of scope) regulation-service-stub module
 
-Open a **new** terminal (or `cd` out of the engine repo). Create the second project in the same workspace.
+**Skip this step** — external regulation service is out of scope for this POC. The following is retained for reference only.
+
+The stub is a minimal HTTP service that implements the external-service contract. The engine will call it for the **service path**. It uses the JDK’s built-in `HttpServer` (no Spring) and Jackson for JSON.
 
 ```bash
-cd ~/payroll-poc
-mkdir payroll-regulations-poc
-cd payroll-regulations-poc
-git init
+mkdir -p regulation-service-stub/src/main/java/com/payroll/regulation/stub
 ```
+
+**File: `regulation-service-stub/pom.xml`**
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.payroll</groupId>
+        <artifactId>payroll-engine-poc</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>regulation-service-stub</artifactId>
+    <packaging>jar</packaging>
+    <name>Regulation Service Stub</name>
+    <description>Minimal HTTP service for external regulation service path</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.payroll</groupId>
+            <artifactId>regulation-service-api</artifactId>
+            <version>1.0.0-SNAPSHOT</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>2.15.3</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+            <version>2.15.3</version>
+        </dependency>
+    </dependencies>
+</project>
+```
+
+**File: `regulation-service-stub/src/main/java/com/payroll/regulation/stub/StubRegulationServer.java`**
+```java
+package com.payroll.regulation.stub;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.payroll.regulation.service.api.EvaluateWageTypeRequest;
+import com.payroll.regulation.service.api.EvaluateWageTypeResponse;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
+
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
+
+public class StubRegulationServer {
+
+    public static void main(String[] args) throws Exception {
+        ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
+        int port = args.length > 0 ? Integer.parseInt(args[0]) : 8080;
+
+        HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
+        server.createContext("/evaluate/wage-type", exchange -> {
+            if (!"POST".equals(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                return;
+            }
+            try {
+                EvaluateWageTypeRequest req = mapper.readValue(exchange.getRequestBody(), EvaluateWageTypeRequest.class);
+                BigDecimal value = evaluate(req.wageTypeNumber(), req.caseValues());
+                byte[] body = mapper.writeValueAsBytes(new EvaluateWageTypeResponse(value));
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body);
+            } catch (Exception e) {
+                byte[] err = ("{\"error\":\"" + e.getMessage() + "\"}").getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(500, err.length);
+                exchange.getResponseBody().write(err);
+            }
+        });
+        server.start();
+        System.out.println("Stub regulation service listening on port " + port + ", path POST /evaluate/wage-type");
+    }
+
+    private static BigDecimal evaluate(int wageTypeNumber, Map<String, BigDecimal> caseValues) {
+        BigDecimal base = caseValues != null ? caseValues.get("BaseSalary") : null;
+        return switch (wageTypeNumber) {
+            case 1001 -> new BigDecimal("100.00");
+            case 1002 -> base != null ? base.multiply(new BigDecimal("0.20")).setScale(2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
+            case 1003 -> base != null ? base.multiply(new BigDecimal("0.10")).setScale(2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
+            case 1004 -> base != null ? new BigDecimal("500").min(base) : new BigDecimal("500");
+            case 1005 -> base != null ? base : BigDecimal.ZERO;
+            default -> BigDecimal.ZERO;
+        };
+    }
+}
+```
+
+Add a manifest main class so you can run the stub JAR. In `regulation-service-stub/pom.xml` add inside `<project>`:
+```xml
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.3.0</version>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>com.payroll.regulation.stub.StubRegulationServer</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+```
+
+Run from parent: `mvn clean install`. You can start the stub later with:
+`java -jar regulation-service-stub/target/regulation-service-stub-1.0.0-SNAPSHOT.jar [port]`
+Default port is 8080; the engine will call `http://localhost:8080/evaluate/wage-type`.
+
+---
+
+## Part 4: payroll-regulations-poc (regulation repo)
+
+Use the existing **payroll-regulations-poc** repo in your workspace. Add or update the following structure and files.
 
 ### Step 4.1 Parent POM and poc-regulation module
 
@@ -383,7 +608,7 @@ public class PocRegulationEvaluator implements RegulationEvaluator {
 
 **Build the regulation JAR:**
 ```bash
-cd ~/payroll-poc/payroll-regulations-poc
+cd payroll-regulations-poc
 mvn clean package
 ```
 
@@ -391,7 +616,7 @@ If you see `BUILD SUCCESS`, the JAR is at `poc-regulation/target/poc-regulation-
 
 **Copy it into the engine’s plugins folder:**
 ```bash
-cp poc-regulation/target/poc-regulation-1.0.0.jar ~/payroll-poc/payroll-engine-poc/engine/plugins/
+cp poc-regulation/target/poc-regulation-1.0.0.jar ../payroll-engine-poc/engine/plugins/
 ```
 
 ---
@@ -439,6 +664,8 @@ public class StubEvaluationContext implements EvaluationContext {
 
 ### Step 5.2 RegulationRegistry
 
+The registry maps (regulationId, version) to JAR path and evaluator class name (precompiled JAR only).
+
 **File: `engine/src/main/java/com/payroll/engine/RegulationRegistry.java`**
 ```java
 package com.payroll.engine;
@@ -458,9 +685,9 @@ public class RegulationRegistry {
     }
 
     public void register(String regulationId, String version, String jarFileName, String evaluatorClassName) {
-        String key = key(regulationId, version);
-        jarPathByKey.put(key, pluginsBase.resolve(jarFileName).toString());
-        classNameByKey.put(key, evaluatorClassName);
+        String k = key(regulationId, version);
+        jarPathByKey.put(k, pluginsBase.resolve(jarFileName).toString());
+        classNameByKey.put(k, evaluatorClassName);
     }
 
     public Optional<String> getJarPath(String regulationId, String version) {
@@ -477,7 +704,64 @@ public class RegulationRegistry {
 }
 ```
 
-### Step 5.3 RegulationEvaluatorLoader
+### Step 5.3 (Out of scope — skip) RegulationServiceClient
+
+**Skip this step** — external regulation service is out of scope. The client would call the external regulation service over HTTP (POST /evaluate/wage-type). It uses the shared request/response DTOs and Jackson for JSON.
+
+**File: `engine/src/main/java/com/payroll/engine/RegulationServiceClient.java`**
+```java
+package com.payroll.engine;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.payroll.regulation.api.WageTypeResult;
+import com.payroll.regulation.service.api.EvaluateWageTypeRequest;
+import com.payroll.regulation.service.api.EvaluateWageTypeResponse;
+
+import java.math.BigDecimal;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.Map;
+
+public class RegulationServiceClient {
+    private final String baseUrl;
+    private final HttpClient httpClient;
+    private final ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
+
+    public RegulationServiceClient(String baseUrl) {
+        this.baseUrl = baseUrl.endsWith("/") ? baseUrl : baseUrl + "/";
+        this.httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(5))
+                .readTimeout(Duration.ofSeconds(10))
+                .build();
+    }
+
+    public WageTypeResult evaluateWageType(String tenantId, String regulationId, String employeeId,
+                                           java.time.LocalDate periodStart, java.time.LocalDate periodEnd,
+                                           int wageTypeNumber, Map<String, BigDecimal> caseValues) throws Exception {
+        EvaluateWageTypeRequest req = new EvaluateWageTypeRequest(
+                tenantId, regulationId, employeeId, periodStart, periodEnd, wageTypeNumber,
+                caseValues != null ? Map.copyOf(caseValues) : Map.of());
+        byte[] body = mapper.writeValueAsBytes(req);
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl + "evaluate/wage-type"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body))
+                .build();
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 200) {
+            throw new RuntimeException("Regulation service returned " + response.statusCode() + ": " + response.body());
+        }
+        EvaluateWageTypeResponse resp = mapper.readValue(response.body(), EvaluateWageTypeResponse.class);
+        return new WageTypeResult(wageTypeNumber, resp.value() != null ? resp.value() : BigDecimal.ZERO);
+    }
+}
+```
+
+### Step 5.4 RegulationEvaluatorLoader (JAR path)
 
 **File: `engine/src/main/java/com/payroll/engine/RegulationEvaluatorLoader.java`**
 ```java
@@ -526,7 +810,9 @@ public class RegulationEvaluatorLoader {
 }
 ```
 
-### Step 5.4 MinimalPayrun
+### Step 5.5 MinimalPayrun (JAR path only)
+
+The payrun uses the loader to get the evaluator and evaluates each wage type in process.
 
 **File: `engine/src/main/java/com/payroll/engine/MinimalPayrun.java`**
 ```java
@@ -561,7 +847,9 @@ public class MinimalPayrun {
 }
 ```
 
-### Step 5.5 Main class to run the payrun
+### Step 5.6 Main class to run the payrun (JAR path only)
+
+Main registers the regulation JAR and runs the payrun.
 
 **File: `engine/src/main/java/com/payroll/engine/Main.java`**
 ```java
@@ -576,7 +864,6 @@ import java.util.Map;
 
 public class Main {
     public static void main(String[] args) throws Exception {
-        // plugins/ is relative to engine module directory when run from engine/target/ or from IDE
         var pluginsDir = Paths.get("plugins").toAbsolutePath();
         if (!pluginsDir.toFile().exists()) {
             pluginsDir = Paths.get("engine/plugins").toAbsolutePath();
@@ -635,34 +922,29 @@ Add the main class to the engine POM so Maven knows how to run it:
 
 ### 6.1 Build order
 
-1. **Engine repo (install API and engine):**
+1. **Engine repo (install all modules including stub):**
    ```bash
-   cd ~/payroll-poc/payroll-engine-poc
+   cd payroll-engine-poc
    mvn clean install
    ```
 
-2. **Regulations repo (build JAR):**
+2. **Regulations repo (build regulation JAR for JAR path):**
    ```bash
-   cd ~/payroll-poc/payroll-regulations-poc
+   cd payroll-regulations-poc
    mvn clean package
    ```
 
-3. **Copy regulation JAR into engine plugins:**
+3. **Copy regulation JAR into engine plugins (for JAR path):**
    ```bash
-   cp ~/payroll-poc/payroll-regulations-poc/poc-regulation/target/poc-regulation-1.0.0.jar \
-      ~/payroll-poc/payroll-engine-poc/engine/plugins/
+   cp payroll-regulations-poc/poc-regulation/target/poc-regulation-1.0.0.jar payroll-engine-poc/engine/plugins/
    ```
+   (Run from the parent of both repos, or use absolute paths if your layout differs.)
 
-### 6.2 Run the engine
+### 6.2 Run the engine (JAR path only)
 
-You must run the engine with **working directory** set to a place where the relative path `plugins/` (or `engine/plugins/`) points to the folder that contains `poc-regulation-1.0.0.jar`.
+From the engine module directory, run the engine. The **JAR path** will work as long as the regulation JAR is in `engine/plugins/`. You do **not** need the stub for this.
 
-**Option A — From engine module directory:**
-```bash
-cd ~/payroll-poc/payroll-engine-poc/engine
-mvn exec:java -Dexec.mainClass="com.payroll.engine.Main"
-```
-To use `exec:java`, add this plugin to `engine/pom.xml` inside `<build><plugins>`:
+Add to `engine/pom.xml` inside `<build><plugins>` (if not already present):
 ```xml
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
@@ -673,21 +955,19 @@ To use `exec:java`, add this plugin to `engine/pom.xml` inside `<build><plugins>
                 </configuration>
             </plugin>
 ```
-Then run:
+
+Run:
 ```bash
-cd ~/payroll-poc/payroll-engine-poc/engine
+cd payroll-engine-poc/engine
 mvn exec:java
 ```
-By default, Maven runs with working directory = engine module, so `plugins/` is `engine/plugins/` — make sure the JAR is in `engine/plugins/`.
-
-**Option B — Run the JAR directly:**
+Or run the JAR directly (working directory = `engine/`):
 ```bash
-cd ~/payroll-poc/payroll-engine-poc/engine
+cd payroll-engine-poc/engine
 java -jar target/engine-1.0.0-SNAPSHOT.jar
 ```
-Here the working directory is `engine/`, so `plugins/` must be the folder `engine/plugins/` (which we created and where you copied the JAR). So this should work.
 
-**Expected output (something like):**
+**Expected output:**
 ```
 Wage type results:
   1001 -> 100.00
@@ -703,17 +983,17 @@ Wage type results:
 
 | Problem | What to check |
 |--------|----------------|
-| `regulation-api` not found when building payroll-regulations-poc | Run `mvn install` in **payroll-engine-poc** first so regulation-api is in `~/.m2/repository`. |
-| `JAR not found: ... plugins/poc-regulation-1.0.0.jar` | Copy the JAR into `payroll-engine-poc/engine/plugins/`. When you run, the current directory must be such that `plugins` or `engine/plugins` exists and contains the JAR (e.g. run from `engine/` and use path `plugins/`). |
-| `ClassNotFoundException: com.payroll.regulation.poc.PocRegulationEvaluator` | The JAR might not be in the right place, or the path in the registry is wrong. Ensure registry uses the same path as where you copied the JAR (e.g. `pluginsBase.resolve("poc-regulation-1.0.0.jar")`). |
+| `regulation-api` not found | Run `mvn install` in **payroll-engine-poc** first so regulation-api is in `~/.m2/repository`. |
+| `JAR not found: ... plugins/poc-regulation-1.0.0.jar` | Copy the regulation JAR into `payroll-engine-poc/engine/plugins/`. Run the engine from `engine/` so `plugins/` resolves correctly. |
+| `ClassNotFoundException: com.payroll.regulation.poc.PocRegulationEvaluator` | JAR path: ensure the JAR is in `engine/plugins/` and the registry uses `register` with the correct file name and class name. |
 | `NoSuchMethodException: <init>` | The regulation class must have a **no-argument** public constructor. |
-| Java version mismatch | Use the same version (17, 21, 25, or whatever you chose) in both projects and for `java`/`javac`/`mvn`. |
+| Java version mismatch | Use the same version (17, 21, 25) in all projects and for `java`/`javac`/`mvn`. |
 
 ---
 
 ## Part 8: Optional — add a unit test in the engine
 
-To run the payrun from a test (and ensure `plugins/` is found), add JUnit to the engine and a test that builds registry (with path to `engine/plugins/`), loader, and MinimalPayrun, then asserts the results. This keeps the “run from IDE” path consistent by using the project layout (e.g. `Paths.get("src/test/resources/plugins")` or a path relative to the project root).
+To run the payrun from a test (and ensure `plugins/` is found), add JUnit to the engine and a test that builds registry (with path to `engine/plugins/`), loader, and MinimalPayrun(loader), then asserts the results. This keeps the “run from IDE” path consistent by using the project layout (e.g. `Paths.get("src/test/resources/plugins")` or a path relative to the project root).
 
 Add to `engine/pom.xml` in `<dependencies>`:
 ```xml
@@ -725,20 +1005,19 @@ Add to `engine/pom.xml` in `<dependencies>`:
         </dependency>
 ```
 
-Create `engine/src/test/java/com/payroll/engine/MinimalPayrunTest.java` that uses a path to `engine/plugins` (e.g. from `System.getProperty("user.dir")` or a known relative path) and calls `payrun.run(...)` then asserts `results.size() == 5` and one or two values. Run with `mvn test`.
+Create `engine/src/test/java/com/payroll/engine/MinimalPayrunTest.java` that builds a registry (with `registerJar`), loader, a `RegulationServiceClient` (any base URL for JAR-only tests), and `MinimalPayrun(registry, loader, serviceClient)`; use a path to `engine/plugins`, then call `payrun.run("poc-regulation", "1.0.0", List.of(1001, 1002, 1003, 1004, 1005), context)` and assert `results.size() == 5` and one or two values. Run with `mvn test`.
 
 ---
 
 ## Quick reference: directory layout
 
 **payroll-engine-poc**
-- `pom.xml` (parent)
-- `regulation-api/pom.xml` + `regulation-api/src/main/java/com/payroll/regulation/api/*.java`
-- `engine/pom.xml` + `engine/plugins/` (put regulation JAR here) + `engine/src/main/java/com/payroll/engine/*.java`
+- `pom.xml` (parent; modules: regulation-api, engine)
+- `regulation-api/` — JAR contract (RegulationEvaluator, EvaluationContext, WageTypeResult)
+- `engine/` — Registry (JAR), loader, MinimalPayrun, Main; `engine/plugins/` for regulation JAR
 
 **payroll-regulations-poc**
-- `pom.xml` (parent)
-- `poc-regulation/pom.xml` + `poc-regulation/src/main/java/com/payroll/regulation/poc/PocRegulationEvaluator.java`
+- `pom.xml` (parent) + `poc-regulation/` — Implements RegulationEvaluator (JAR path)
 
 **Build & run**
 1. `cd payroll-engine-poc` → `mvn clean install`
@@ -746,4 +1025,4 @@ Create `engine/src/test/java/com/payroll/engine/MinimalPayrunTest.java` that use
 3. `cp payroll-regulations-poc/poc-regulation/target/poc-regulation-1.0.0.jar payroll-engine-poc/engine/plugins/`
 4. `cd payroll-engine-poc/engine` → `java -jar target/engine-1.0.0-SNAPSHOT.jar`
 
-You now have the full local development flow for the precompiled JAR POC.
+You now have the full local development flow for the **precompiled JAR** POC, as defined in [poc_precompiled_jar_scope.md](poc_precompiled_jar_scope.md). External regulation service is out of scope.
