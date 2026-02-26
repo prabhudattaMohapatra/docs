@@ -23,6 +23,8 @@ Track progress by updating the status as you complete each part. Use: **Not star
 | Part 4.2: WageTypes.json (wage type numbers, order, mapping, collectors) | payroll-regulations-poc | Done |
 | Part 4.3: France rules (FranceRules.java + FranceRulesContext) | payroll-regulations-poc | Done |
 | Part 4.4: Running the France rules (required development) | both | Done |
+| Part 4.5: Regulation optimizations (Method cache, BigDecimal constant reuse) | payroll-regulations-poc | Done |
+| Part 4.6: Direct dispatch (MethodHandle) maintaining regulation independence | payroll-regulations-poc | Done |
 | Part 5.1: StubEvaluationContext | payroll-engine-poc | Done |
 | Part 5.2: RegulationRegistry (JAR path only) | payroll-engine-poc | Done |
 | Part 5.3: RegulationEvaluatorLoader | payroll-engine-poc | Done |
@@ -645,6 +647,46 @@ Use the official 2025 withholding tables for metropolitan France and overseas.
 - Register the France regulation (id + version) and its JAR in the engine. The engine calls **evaluator.getWageTypeNumbers()** to get the list and runs the payrun in that order (see Step 4.4.3).
 
 When all four steps are done, you can run a payrun for the France regulation with stub data that supplies the required employee and company fields; the engine will evaluate wage types in order, update collectors, and produce net salary and contribution totals.
+
+---
+
+## Part 4.5: Regulation optimizations (Method cache, BigDecimal constant reuse)
+
+Two performance optimizations are implemented in the **payroll-regulations-poc** regulation JAR to reduce dispatch and allocation cost (see [POC_TS_VS_JAVA_FAIR_COMPARISON_STANDARDIZATION.md](POC_TS_VS_JAVA_FAIR_COMPARISON_STANDARDIZATION.md)):
+
+1. **Method cache (Option A)**  
+   In **FranceRegulationEvaluator**, `Method` instances for **FranceRules** are cached by method name in a `ConcurrentHashMap<String, Method>`. On first use for a wage type, `FranceRules.class.getMethod(entry.methodName(), FranceRulesContext.class)` is called once and stored; on subsequent evaluations the cached `Method` is used and only `invoke(null, ctx)` is called. This removes 60×N (or 205×N) `getMethod` calls per payrun and reduces reflection overhead.
+
+2. **Reuse constants (BigDecimal)**  
+   In **FranceRules**, fixed numeric literals used in rules (rates, multipliers, thresholds) are no longer created with `new BigDecimal("...")` on every call. A static **DECIMAL_CACHE** (`ConcurrentHashMap<String, BigDecimal>`) and helper `c(String val)` ensure one shared `BigDecimal` instance per distinct string value. All former `new BigDecimal("...")` usages in the rules now use `c("...")`, reducing allocation and GC pressure in hot paths.
+
+**Where:** `payroll-regulations-poc/poc-regulation/` — **FranceRegulationEvaluator.java** (Method cache), **FranceRules.java** (DECIMAL_CACHE and `c()`). No changes in **payroll-engine-poc** are required; the engine continues to load and call the regulation JAR as before. After rebuilding the regulation JAR and copying it into the engine’s `plugins/`, these optimizations are active.
+
+---
+
+## Part 4.6: Direct dispatch (map lookup + direct call) while maintaining regulation independence
+
+**Goal:** Use direct invocation (map lookup + call) instead of reflection in the regulation JAR so that dispatch cost is closer to the TypeScript POC, **without** coupling the engine to the regulation's wage type set. Regulation must remain a **separate artifact** (JAR) that can be built, versioned, and loaded independently (at image build time or at runtime).
+
+**Why independence is preserved:** The engine only calls `evaluator.evaluateWageType(wageTypeNumber, context)`. It does not know about `FranceRules` or method names. All dispatch logic lives **inside the regulation JAR**. So we can replace reflection with direct dispatch **inside the regulation** (e.g. `Map<Integer, MethodHandle>` or a generated switch) and the engine stays unchanged; the regulation remains a swappable JAR.
+
+### Implementation plan (in payroll-regulations-poc only)
+
+1. **Build a dispatch map at load time (inside the regulation JAR).**  
+   In **FranceRegulationEvaluator**, instead of `Method` + `invoke`, use **MethodHandle**:  
+   - At static init, iterate **WageTypesLoader**'s wage type list and for each `(wageTypeNumber, methodName)` resolve `MethodHandles.publicLookup().findStatic(FranceRules.class, methodName, MethodType.methodType(BigDecimal.class, FranceRulesContext.class))` and store in a **Map&lt;Integer, MethodHandle&gt;** keyed by wage type number.
+
+2. **Dispatch by map lookup + invokeExact.**  
+   In `dispatch(wageTypeNumber, ctx)`: look up the `MethodHandle` by wage type number; if absent return null; otherwise `(BigDecimal) handle.invokeExact(ctx)`.  
+   `MethodHandle.invokeExact` is faster than `Method.invoke` and is easier for the JIT to optimize (no boxing of arguments, no reflective path).
+
+3. **No engine or image coupling.**  
+   The engine still loads the regulation JAR by (id, version) from config and instantiates the evaluator class by name. It never references `FranceRules` or wage type numbers. The regulation JAR can still be built separately, published to CodeArtifact, and placed in the image at build time (or loaded at runtime if the engine supports it). No change to **payroll-engine-poc**.
+
+4. **Optional later step: generated switch.**  
+   For maximum performance, the regulation build could **generate** a Java class that does a `switch (wageTypeNumber) { case 2001: return FranceRules.grossSalary(ctx); ... }` from **WageTypes.json**. That generated class would live in the regulation module and be compiled into the regulation JAR. Same independence guarantee: engine unchanged; regulation remains a separate artifact.
+
+**Status:** Implemented using **MethodHandle** (steps 1–3). Optional generated switch (step 4) can be added later if needed.
 
 ---
 
