@@ -184,3 +184,80 @@ When **MinimalPayrun.run(regulationId, version, wageTypeNumbers, context)** is c
    - MinimalPayrun gets evaluator (from loader cache or load JAR), then for each wage type calls evaluator.evaluateWageType(num, context) and collects WageTypeResult.
    - Print "Employee &lt;id&gt;:" then each non-zero wage type result; print blank line.
 7. **End**: After last employee, main exits.
+
+---
+
+## 7. Mermaid sequence diagram (Lucidchart-compatible)
+
+The following Mermaid.js sequence diagram can be pasted into Lucidchart (Insert → Diagram → Mermaid) or any Mermaid-compatible viewer. It uses standard sequence syntax and avoids Lucidchart-unsupported constructs.
+
+```mermaid
+sequenceDiagram
+    participant Main
+    participant Registry as RegulationRegistry
+    participant Loader as RegulationEvaluatorLoader
+    participant Payrun as MinimalPayrun
+    participant Evaluator as RegulationEvaluator
+    participant StubData as stub-data
+
+    Note over Main,StubData: 1. Startup and config
+    Main->>Main: Resolve plugins dir (plugins / engine/plugins)
+    Main->>Main: Create ObjectMapper
+    Main->>StubData: Load regulations.json (classpath)
+    alt config.regulations is empty
+        Main->>Main: throw
+    end
+    Main->>Registry: Create RegulationRegistry(pluginsDir)
+    Main->>Registry: Register each config entry (id, version, jar, evaluatorClass)
+    Main->>Loader: Create RegulationEvaluatorLoader
+    Main->>Payrun: Create MinimalPayrun
+
+    Note over Main,Evaluator: 2. Get first regulation evaluator and wage types
+    Main->>Loader: getEvaluator(first.id, first.version)
+    Loader->>Registry: JAR path, class name (if not cached)
+    Loader->>Loader: URLClassLoader load JAR, instantiate evaluator, cache
+    Loader-->>Main: evaluator
+    Main->>Evaluator: getWageTypeNumbers()
+    Evaluator-->>Main: wageTypeNumbers list
+
+    Note over Main,StubData: 3. Load stub list
+    Main->>StubData: Load stub-data/index.txt
+    StubData-->>Main: list of stub paths
+    alt stub list empty
+        Main->>Main: end (no output)
+    end
+
+    loop For each stub path in list
+        Note over Main,Evaluator: 4. Per-employee flow
+        Main->>StubData: Load stub JSON at path
+        StubData-->>Main: JSON content
+        Main->>Main: Parse → StubDataRecord
+        Main->>Main: Convert case values → BigDecimal map
+        Main->>Main: Build StubEvaluationContext(tenantId, employeeId, period, maps)
+        Main->>Payrun: run(regulationId, version, wageTypeNumbers, context)
+
+        Payrun->>Loader: getEvaluator(id, version)
+        Loader-->>Payrun: evaluator (cached or newly loaded)
+
+        loop For each wage type number
+            Payrun->>Evaluator: evaluateWageType(wageTypeNumber, context)
+            Note right of Evaluator: Uses context: getCaseValue, getPeriodStart, etc.
+            Evaluator-->>Payrun: BigDecimal amount
+            Payrun->>Payrun: Collect WageTypeResult(num, value)
+        end
+
+        Payrun-->>Main: List of WageTypeResult
+        Main->>Main: Print "Employee &lt;id&gt;:"
+        Main->>Main: For each result != 0: print wageType -> value
+        Main->>Main: Print blank line
+    end
+
+    Note over Main,StubData: 5. End
+    Main->>Main: Exit
+```
+
+### Lucidchart usage
+
+- In Lucidchart: **Insert → Diagram → Code** (or **Mermaid** if available), then paste the contents of the code block above (without the surrounding ` ```mermaid ` / ` ``` `).
+- If your Lucidchart version uses **Import → Mermaid**, paste the same sequence block.
+- The diagram uses only `participant`, `Note`, `alt`, `loop`, `->`, `-->>`, and `end`, which are widely supported. If a label contains `<` or `>`, Lucidchart may require the HTML entities `&lt;` and `&gt;` (already used in the diagram for `List<WageTypeResult>` and `Employee <id>`).
